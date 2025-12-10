@@ -13,11 +13,29 @@ export class GameScene extends Phaser.Scene {
     this.highlightGraphics = null;
     this.hoveredHex = null;
     this.selectedHex = null;
+
+    // Game state
+    this.gameState = {
+      currentPlayer: 1,
+      phase: 'hunterSelection', // hunterSelection, placement, playing
+      diceRoll: null,
+      remainingMoves: 0,
+      players: {
+        1: { hunter: null, hunterSprite: null, position: null },
+        2: { hunter: null, hunterSprite: null, position: null }
+      }
+    };
   }
 
   preload() {
-    // TODO: Load board image and sprites
-    // this.load.image('board', 'assets/board/stranglethorn_board.png');
+    // Load board
+    this.load.image('board', 'assets/board/stranglethorn_board.png');
+
+    // Load hunter sprites
+    this.load.image('zahra', 'assets/sprites/hunters/zahra.png');
+    this.load.image('andromeda', 'assets/sprites/hunters/andromeda.png');
+    this.load.image('nox', 'assets/sprites/hunters/nox.png');
+    this.load.image('lugh', 'assets/sprites/hunters/lugh.png');
   }
 
   create() {
@@ -28,13 +46,18 @@ export class GameScene extends Phaser.Scene {
       GAME_CONFIG.gridOriginY
     );
 
+    // Add board image as background
+    const board = this.add.image(GAME_CONFIG.width / 2, GAME_CONFIG.height / 2, 'board');
+
+    // Scale board to fit screen while maintaining aspect ratio
+    const scaleX = GAME_CONFIG.width / board.width;
+    const scaleY = GAME_CONFIG.height / board.height;
+    const scale = Math.max(scaleX, scaleY);
+    board.setScale(scale);
+
     // Create graphics layers
-    this.boardBackground = this.add.graphics();
     this.hexGraphics = this.add.graphics();
     this.highlightGraphics = this.add.graphics();
-
-    // Draw temporary board background
-    this.drawTempBackground();
 
     // Draw hex grid overlay
     this.drawHexGrid();
@@ -42,45 +65,311 @@ export class GameScene extends Phaser.Scene {
     // Set up interactivity
     this.setupInteractivity();
 
-    // Add debug text
-    this.debugText = this.add.text(10, 10, '', {
-      font: '16px monospace',
-      fill: '#00ff00',
-      backgroundColor: '#000000',
-      padding: { x: 10, y: 10 }
-    });
+    // Create UI elements
+    this.createUI();
 
-    // Add title text
-    this.add.text(GAME_CONFIG.width / 2, 30, 'STRANGLETHORN - HEX GRID SYSTEM', {
-      font: 'bold 32px monospace',
-      fill: '#00ff00',
-      stroke: '#000000',
-      strokeThickness: 4
-    }).setOrigin(0.5);
-
-    // Add instructions
-    this.add.text(GAME_CONFIG.width / 2, 70, 'Hover over hexes to see coordinates | Click to select', {
-      font: '18px monospace',
-      fill: '#ffffff',
-      stroke: '#000000',
-      strokeThickness: 2
-    }).setOrigin(0.5);
-
-    console.log('Stranglethorn: Hex grid system initialized');
-    console.log('Hex size:', GAME_CONFIG.hexSize);
-    console.log('Grid origin:', GAME_CONFIG.gridOriginX, GAME_CONFIG.gridOriginY);
+    console.log('Stranglethorn: Game initialized');
+    console.log('Phase:', this.gameState.phase);
   }
 
   /**
-   * Draw temporary board background (placeholder until board image is added)
+   * Create UI elements (hunter selection, dice, turn info)
    */
-  drawTempBackground() {
-    this.boardBackground.fillStyle(0x2a2a2a, 1);
-    this.boardBackground.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height);
+  createUI() {
+    // Game title
+    this.add.text(GAME_CONFIG.width / 2, 30, 'STRANGLETHORN', {
+      font: 'bold 48px monospace',
+      fill: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 6
+    }).setOrigin(0.5).setDepth(1000);
 
-    // Draw a border
-    this.boardBackground.lineStyle(4, 0x00ff00, 1);
-    this.boardBackground.strokeRect(50, 100, GAME_CONFIG.width - 100, GAME_CONFIG.height - 150);
+    // Current phase/instruction text
+    this.phaseText = this.add.text(GAME_CONFIG.width / 2, 85, '', {
+      font: 'bold 20px monospace',
+      fill: '#ffff00',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5).setDepth(1000);
+
+    // Player info panel (top left)
+    this.playerInfoText = this.add.text(20, 120, '', {
+      font: '16px monospace',
+      fill: '#ffffff',
+      backgroundColor: '#000000aa',
+      padding: { x: 15, y: 10 }
+    }).setDepth(1000);
+
+    // Dice UI panel (top right)
+    this.dicePanel = this.createDicePanel();
+
+    // Hunter selection panel (shown during hunter selection phase)
+    this.hunterSelectionPanel = this.createHunterSelectionPanel();
+
+    // Update UI based on current phase
+    this.updateUI();
+  }
+
+  /**
+   * Create dice rolling panel
+   */
+  createDicePanel() {
+    const panel = this.add.container(GAME_CONFIG.width - 220, 120);
+    panel.setDepth(1000);
+
+    // Background
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.8);
+    bg.fillRoundedRect(0, 0, 200, 150, 10);
+    bg.lineStyle(3, 0xffffff, 1);
+    bg.strokeRoundedRect(0, 0, 200, 150, 10);
+    panel.add(bg);
+
+    // Dice display
+    const diceText = this.add.text(100, 40, '?', {
+      font: 'bold 48px monospace',
+      fill: '#ffffff'
+    }).setOrigin(0.5);
+    panel.add(diceText);
+
+    // Roll button
+    const buttonBg = this.add.graphics();
+    buttonBg.fillStyle(0x00aa00, 1);
+    buttonBg.fillRoundedRect(25, 80, 150, 50, 8);
+    buttonBg.lineStyle(2, 0xffffff, 1);
+    buttonBg.strokeRoundedRect(25, 80, 150, 50, 8);
+    panel.add(buttonBg);
+
+    const buttonText = this.add.text(100, 105, 'ROLL DICE', {
+      font: 'bold 16px monospace',
+      fill: '#ffffff'
+    }).setOrigin(0.5);
+    panel.add(buttonText);
+
+    // Make button interactive
+    const buttonZone = this.add.zone(100, 105, 150, 50)
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+
+    buttonZone.on('pointerdown', () => this.rollDice());
+    buttonZone.on('pointerover', () => buttonBg.clear().fillStyle(0x00ff00, 1).fillRoundedRect(25, 80, 150, 50, 8).lineStyle(2, 0xffffff, 1).strokeRoundedRect(25, 80, 150, 50, 8));
+    buttonZone.on('pointerout', () => buttonBg.clear().fillStyle(0x00aa00, 1).fillRoundedRect(25, 80, 150, 50, 8).lineStyle(2, 0xffffff, 1).strokeRoundedRect(25, 80, 150, 50, 8));
+
+    panel.add(buttonZone);
+
+    // Store references
+    panel.diceText = diceText;
+    panel.buttonBg = buttonBg;
+    panel.buttonText = buttonText;
+    panel.buttonZone = buttonZone;
+
+    panel.setVisible(false); // Hidden until gameplay phase
+    return panel;
+  }
+
+  /**
+   * Create hunter selection panel
+   */
+  createHunterSelectionPanel() {
+    const panel = this.add.container(GAME_CONFIG.width / 2, GAME_CONFIG.height / 2);
+    panel.setDepth(2000);
+
+    // Background overlay
+    const overlay = this.add.graphics();
+    overlay.fillStyle(0x000000, 0.85);
+    overlay.fillRect(-GAME_CONFIG.width / 2, -GAME_CONFIG.height / 2, GAME_CONFIG.width, GAME_CONFIG.height);
+    panel.add(overlay);
+
+    // Panel background
+    const panelBg = this.add.graphics();
+    panelBg.fillStyle(0x1a1a1a, 1);
+    panelBg.fillRoundedRect(-400, -250, 800, 500, 15);
+    panelBg.lineStyle(4, 0xffaa00, 1);
+    panelBg.strokeRoundedRect(-400, -250, 800, 500, 15);
+    panel.add(panelBg);
+
+    // Title
+    const title = this.add.text(0, -210, 'CHOOSE YOUR HUNTER', {
+      font: 'bold 32px monospace',
+      fill: '#ffaa00'
+    }).setOrigin(0.5);
+    panel.add(title);
+
+    // Player indicator
+    panel.playerText = this.add.text(0, -170, 'PLAYER 1', {
+      font: 'bold 24px monospace',
+      fill: '#ffffff'
+    }).setOrigin(0.5);
+    panel.add(panel.playerText);
+
+    // Hunter cards
+    const hunters = ['zahra', 'andromeda', 'nox', 'lugh'];
+    const hunterNames = ['ZAHRA\n(Silverbacks)', 'ANDROMEDA\n(Tyrants)', 'NOX\n(Reapers)', 'LUGH\n(Goblins)'];
+    panel.hunterCards = [];
+
+    hunters.forEach((hunter, index) => {
+      const x = -300 + index * 200;
+      const y = 0;
+
+      // Card background
+      const cardBg = this.add.graphics();
+      cardBg.fillStyle(0x2a2a2a, 1);
+      cardBg.fillRoundedRect(x - 75, y - 110, 150, 200, 10);
+      cardBg.lineStyle(3, 0x555555, 1);
+      cardBg.strokeRoundedRect(x - 75, y - 110, 150, 200, 10);
+      panel.add(cardBg);
+
+      // Hunter sprite
+      const sprite = this.add.image(x, y - 30, hunter).setScale(0.4);
+      panel.add(sprite);
+
+      // Hunter name
+      const nameText = this.add.text(x, y + 70, hunterNames[index], {
+        font: 'bold 12px monospace',
+        fill: '#ffffff',
+        align: 'center'
+      }).setOrigin(0.5);
+      panel.add(nameText);
+
+      // Interactive zone
+      const cardZone = this.add.zone(x, y, 150, 200)
+        .setInteractive({ useHandCursor: true });
+
+      cardZone.on('pointerdown', () => this.selectHunter(hunter));
+      cardZone.on('pointerover', () => {
+        cardBg.clear();
+        cardBg.fillStyle(0x3a3a3a, 1);
+        cardBg.fillRoundedRect(x - 75, y - 110, 150, 200, 10);
+        cardBg.lineStyle(3, 0xffaa00, 1);
+        cardBg.strokeRoundedRect(x - 75, y - 110, 150, 200, 10);
+      });
+      cardZone.on('pointerout', () => {
+        cardBg.clear();
+        cardBg.fillStyle(0x2a2a2a, 1);
+        cardBg.fillRoundedRect(x - 75, y - 110, 150, 200, 10);
+        cardBg.lineStyle(3, 0x555555, 1);
+        cardBg.strokeRoundedRect(x - 75, y - 110, 150, 200, 10);
+      });
+
+      panel.add(cardZone);
+      panel.hunterCards.push({ hunter, cardBg, sprite, nameText, cardZone, x, y });
+    });
+
+    return panel;
+  }
+
+  /**
+   * Select a hunter for the current player
+   */
+  selectHunter(hunterType) {
+    const player = this.gameState.currentPlayer;
+    this.gameState.players[player].hunter = hunterType;
+
+    console.log(`Player ${player} selected ${hunterType}`);
+
+    // Check if both players have selected
+    if (player === 1) {
+      // Switch to player 2
+      this.gameState.currentPlayer = 2;
+      this.hunterSelectionPanel.playerText.setText('PLAYER 2');
+    } else {
+      // Both players selected, move to placement phase
+      this.gameState.phase = 'placement';
+      this.gameState.currentPlayer = 1;
+      this.hunterSelectionPanel.setVisible(false);
+      this.placeHuntersOnBoard();
+    }
+  }
+
+  /**
+   * Place hunters on the board at starting positions
+   */
+  placeHuntersOnBoard() {
+    // Player 1 starts at bottom-left area
+    const p1Position = { q: -5, r: 5 };
+    this.gameState.players[1].position = p1Position;
+
+    const p1Pos = this.hexGrid.axialToPixel(p1Position.q, p1Position.r);
+    this.gameState.players[1].hunterSprite = this.add.image(
+      p1Pos.x,
+      p1Pos.y,
+      this.gameState.players[1].hunter
+    ).setScale(0.15).setDepth(100);
+
+    // Player 2 starts at top-right area
+    const p2Position = { q: 5, r: -5 };
+    this.gameState.players[2].position = p2Position;
+
+    const p2Pos = this.hexGrid.axialToPixel(p2Position.q, p2Position.r);
+    this.gameState.players[2].hunterSprite = this.add.image(
+      p2Pos.x,
+      p2Pos.y,
+      this.gameState.players[2].hunter
+    ).setScale(0.15).setDepth(100);
+
+    // Move to playing phase
+    this.gameState.phase = 'playing';
+    this.dicePanel.setVisible(true);
+    this.updateUI();
+
+    console.log('Hunters placed on board. Game starting!');
+  }
+
+  /**
+   * Roll the dice
+   */
+  rollDice() {
+    if (this.gameState.remainingMoves > 0) {
+      console.log('Finish your moves before rolling again!');
+      return;
+    }
+
+    // Roll d6
+    const roll = Phaser.Math.Between(1, 6);
+    this.gameState.diceRoll = roll;
+    this.gameState.remainingMoves = roll;
+
+    // Animate dice
+    this.dicePanel.diceText.setText(roll.toString());
+
+    // Apply Zahra's passive (25% chance +1 movement)
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayer];
+    if (currentPlayer.hunter === 'zahra' && Math.random() < 0.25) {
+      this.gameState.remainingMoves += 1;
+      console.log('Zahra\'s passive triggered! +1 movement');
+    }
+
+    console.log(`Player ${this.gameState.currentPlayer} rolled ${roll}, has ${this.gameState.remainingMoves} moves`);
+    this.updateUI();
+  }
+
+  /**
+   * Update UI based on current game state
+   */
+  updateUI() {
+    // Update phase text
+    if (this.gameState.phase === 'hunterSelection') {
+      this.phaseText.setText('SELECT YOUR HUNTER');
+      this.hunterSelectionPanel.setVisible(true);
+    } else if (this.gameState.phase === 'placement') {
+      this.phaseText.setText('PLACING HUNTERS...');
+    } else if (this.gameState.phase === 'playing') {
+      this.phaseText.setText(`PLAYER ${this.gameState.currentPlayer}'S TURN`);
+      this.hunterSelectionPanel.setVisible(false);
+    }
+
+    // Update player info
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayer];
+    let infoText = `PLAYER ${this.gameState.currentPlayer}\n`;
+    infoText += `Hunter: ${currentPlayer.hunter || 'None'}\n`;
+    infoText += `\nDice Roll: ${this.gameState.diceRoll || '-'}\n`;
+    infoText += `Moves Left: ${this.gameState.remainingMoves}\n`;
+
+    if (currentPlayer.position) {
+      infoText += `\nPosition: (${currentPlayer.position.q}, ${currentPlayer.position.r})`;
+    }
+
+    this.playerInfoText.setText(infoText);
   }
 
   /**
@@ -115,28 +404,116 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Set up mouse interactivity for hex selection
+   * Set up mouse interactivity for hex selection and movement
    */
   setupInteractivity() {
     this.input.on('pointermove', (pointer) => {
+      if (this.gameState.phase !== 'playing') return;
+
       const axial = this.hexGrid.pixelToAxial(pointer.x, pointer.y);
 
       // Check if hovering over a new hex
       if (!this.hoveredHex || this.hoveredHex.q !== axial.q || this.hoveredHex.r !== axial.r) {
         this.hoveredHex = axial;
         this.updateHighlight();
-        this.updateDebugText();
       }
     });
 
     this.input.on('pointerdown', (pointer) => {
+      if (this.gameState.phase !== 'playing') return;
+
       const axial = this.hexGrid.pixelToAxial(pointer.x, pointer.y);
       this.selectedHex = axial;
-      this.updateHighlight();
-      this.updateDebugText();
 
-      console.log('Selected hex:', axial);
+      // Try to move hunter to clicked hex
+      this.moveHunter(axial);
+
+      this.updateHighlight();
     });
+  }
+
+  /**
+   * Move current player's hunter to target hex
+   */
+  moveHunter(targetHex) {
+    if (this.gameState.remainingMoves <= 0) {
+      console.log('No moves remaining! Roll the dice.');
+      return;
+    }
+
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayer];
+    const currentPos = currentPlayer.position;
+
+    // Calculate distance
+    const distance = this.hexGrid.distance(
+      currentPos.q,
+      currentPos.r,
+      targetHex.q,
+      targetHex.r
+    );
+
+    // Check if move is valid (adjacent hex only for now)
+    if (distance !== 1) {
+      console.log('Can only move to adjacent hexes!');
+      return;
+    }
+
+    // Check if we have enough moves
+    if (distance > this.gameState.remainingMoves) {
+      console.log('Not enough moves!');
+      return;
+    }
+
+    // Move hunter
+    currentPlayer.position = { q: targetHex.q, r: targetHex.r };
+    const newPos = this.hexGrid.axialToPixel(targetHex.q, targetHex.r);
+
+    // Animate movement
+    this.tweens.add({
+      targets: currentPlayer.hunterSprite,
+      x: newPos.x,
+      y: newPos.y,
+      duration: 300,
+      ease: 'Power2'
+    });
+
+    // Deduct move
+    this.gameState.remainingMoves -= distance;
+
+    console.log(`Moved to (${targetHex.q}, ${targetHex.r}). ${this.gameState.remainingMoves} moves left.`);
+    this.updateUI();
+
+    // Auto end turn if no moves left
+    if (this.gameState.remainingMoves === 0) {
+      this.time.delayedCall(500, () => {
+        this.showEndTurnPrompt();
+      });
+    }
+  }
+
+  /**
+   * Show end turn prompt
+   */
+  showEndTurnPrompt() {
+    // For now, just auto-switch turns
+    // TODO: Add "End Turn" button in future
+    this.endTurn();
+  }
+
+  /**
+   * End current player's turn
+   */
+  endTurn() {
+    console.log(`Player ${this.gameState.currentPlayer} ended their turn`);
+
+    // Switch players
+    this.gameState.currentPlayer = this.gameState.currentPlayer === 1 ? 2 : 1;
+    this.gameState.diceRoll = null;
+    this.gameState.remainingMoves = 0;
+    this.dicePanel.diceText.setText('?');
+
+    this.updateUI();
+    console.log(`Player ${this.gameState.currentPlayer}'s turn`);
   }
 
   /**
@@ -184,38 +561,6 @@ export class GameScene extends Phaser.Scene {
         4
       );
     }
-  }
-
-  /**
-   * Update debug information display
-   */
-  updateDebugText() {
-    let text = 'HEX GRID DEBUG INFO\n\n';
-
-    if (this.hoveredHex) {
-      const pixel = this.hexGrid.axialToPixel(this.hoveredHex.q, this.hoveredHex.r);
-      text += `Hovered: q=${this.hoveredHex.q}, r=${this.hoveredHex.r}\n`;
-      text += `Position: x=${Math.round(pixel.x)}, y=${Math.round(pixel.y)}\n\n`;
-    }
-
-    if (this.selectedHex) {
-      const pixel = this.hexGrid.axialToPixel(this.selectedHex.q, this.selectedHex.r);
-      text += `Selected: q=${this.selectedHex.q}, r=${this.selectedHex.r}\n`;
-      text += `Position: x=${Math.round(pixel.x)}, y=${Math.round(pixel.y)}\n`;
-
-      // Calculate distance if both hexes are set
-      if (this.hoveredHex && (this.hoveredHex.q !== this.selectedHex.q || this.hoveredHex.r !== this.selectedHex.r)) {
-        const distance = this.hexGrid.distance(
-          this.hoveredHex.q,
-          this.hoveredHex.r,
-          this.selectedHex.q,
-          this.selectedHex.r
-        );
-        text += `\nDistance: ${distance} hexes`;
-      }
-    }
-
-    this.debugText.setText(text);
   }
 
   update() {
