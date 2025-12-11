@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { HexGrid } from '../utils/HexGrid.js';
-import { GAME_CONFIG } from '../config.js';
+import { GAME_CONFIG, STRUCTURE_CONFIG, STRANGLETHORN_CONFIG } from '../config.js';
 
 /**
  * Main game scene for Stranglethorn
@@ -21,9 +21,10 @@ export class GameScene extends Phaser.Scene {
       diceRoll: null,
       remainingMoves: 0,
       players: {
-        1: { hunter: null, hunterSprite: null, position: null },
-        2: { hunter: null, hunterSprite: null, position: null }
-      }
+        1: { hunter: null, hunterSprite: null, position: null, structures: {}, resources: { thorns: 0, ammo: 0, souls: 0 } },
+        2: { hunter: null, hunterSprite: null, position: null, structures: {}, resources: { thorns: 0, ammo: 0, souls: 0 } }
+      },
+      stranglethorns: []
     };
   }
 
@@ -36,6 +37,19 @@ export class GameScene extends Phaser.Scene {
     this.load.image('andromeda', 'assets/sprites/hunters/andromeda.png');
     this.load.image('nox', 'assets/sprites/hunters/nox.png');
     this.load.image('lugh', 'assets/sprites/hunters/lugh.png');
+
+    // Load structure sprites
+    this.load.image('pulse_cannon', 'assets/sprites/structures/pulse_cannon.png');
+    this.load.image('fighting_pits', 'assets/sprites/structures/fighting_pits.png');
+    this.load.image('swarm_portal', 'assets/sprites/structures/swarm_portal.png');
+    this.load.image('ammo_vein', 'assets/sprites/structures/ammo_vein.png');
+    this.load.image('swarm_mother', 'assets/sprites/structures/swarm_mother.png');
+    this.load.image('gatekeeper', 'assets/sprites/structures/gatekeeper.png');
+    this.load.image('temple', 'assets/sprites/structures/temple.png');
+    this.load.image('barracks', 'assets/sprites/structures/barracks.png');
+
+    // Load stranglethorn sprites
+    this.load.image('stranglethorn_base', 'assets/sprites/stranglethorns/base.png');
   }
 
   create() {
@@ -61,6 +75,10 @@ export class GameScene extends Phaser.Scene {
 
     // Draw hex grid overlay
     this.drawHexGrid();
+
+    // Initialize and draw structures
+    this.initializeStructures();
+    this.initializeStranglethorns();
 
     // Set up interactivity
     this.setupInteractivity();
@@ -373,6 +391,123 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * Initialize and place structures
+   */
+  initializeStructures() {
+    // P1 Structures (Left side)
+    const p1Structures = [
+      { type: 'pulseCannon', q: -8, r: 8 },
+      { type: 'fightingPits', q: -7, r: 6 },
+      { type: 'swarmPortal', q: -6, r: 4 },
+      { type: 'ammoVein', q: -8, r: 4 },
+      { type: 'swarmMother', q: -9, r: 6 },
+      { type: 'gateKeeper', q: -7, r: 8 }
+    ];
+
+    p1Structures.forEach(struct => {
+      this.placeStructure(1, struct.type, struct.q, struct.r);
+    });
+
+    // P2 Structures (Right side) - Mirrored
+    const p2Structures = [
+      { type: 'pulseCannon', q: 8, r: -8 },
+      { type: 'fightingPits', q: 7, r: -6 },
+      { type: 'swarmPortal', q: 6, r: -4 },
+      { type: 'ammoVein', q: 8, r: -4 },
+      { type: 'swarmMother', q: 9, r: -6 },
+      { type: 'gateKeeper', q: 7, r: -8 }
+    ];
+
+    p2Structures.forEach(struct => {
+      this.placeStructure(2, struct.type, struct.q, struct.r);
+    });
+
+    // Neutral Structures
+    this.add.image(GAME_CONFIG.width / 2, 100, 'temple').setScale(0.3).setDepth(50); // Temple (Top Center)
+    this.add.image(GAME_CONFIG.width / 2, GAME_CONFIG.height - 100, 'barracks').setScale(0.3).setDepth(50); // Barracks (Bottom Center)
+  }
+
+  placeStructure(playerId, type, q, r) {
+    const config = STRUCTURE_CONFIG[type];
+    const pos = this.hexGrid.axialToPixel(q, r);
+
+    // Create visual sprite
+    const sprite = this.add.image(pos.x, pos.y, type.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)).setScale(0.15).setDepth(50);
+
+    // Create state object
+    const structureState = {
+      id: `${type}_${playerId}`,
+      type: type,
+      name: config.name,
+      hp: config.hp,
+      maxHp: config.hp,
+      position: { q, r },
+      sprite: sprite,
+      owner: playerId
+    };
+
+    // Add HP bar
+    this.createHealthBar(structureState);
+
+    this.gameState.players[playerId].structures[type] = structureState;
+  }
+
+  createHealthBar(entity) {
+    const x = entity.sprite.x - 20;
+    const y = entity.sprite.y - 30;
+
+    const bg = this.add.graphics().setDepth(51);
+    bg.fillStyle(0x000000, 1);
+    bg.fillRect(x, y, 40, 6);
+
+    const bar = this.add.graphics().setDepth(52);
+    this.updateHealthBar(bar, x, y, entity.hp, entity.maxHp);
+
+    entity.healthBar = bar;
+    entity.healthBg = bg;
+  }
+
+  updateHealthBar(graphics, x, y, hp, maxHp) {
+    graphics.clear();
+    const percent = Math.max(0, hp / maxHp);
+    const color = percent > 0.5 ? 0x00ff00 : (percent > 0.25 ? 0xffff00 : 0xff0000);
+
+    graphics.fillStyle(color, 1);
+    graphics.fillRect(x, y, 40 * percent, 6);
+  }
+
+  /**
+   * Initialize Stranglethorn barriers
+   */
+  initializeStranglethorns() {
+    // 5 tiers in the middle column (q=0)
+    for (let r = -2; r <= 2; r++) {
+      const tierIdx = r + 2; // 0 to 4
+      const tierConfig = STRANGLETHORN_CONFIG.tiers[tierIdx];
+
+      const pos = this.hexGrid.axialToPixel(0, r);
+
+      // Create sprite (scale based on tier)
+      const sprite = this.add.image(pos.x, pos.y, 'stranglethorn_base')
+        .setScale(0.15 + (tierIdx * 0.02))
+        .setTint(0xffffff - (tierIdx * 0x202020)) // Darker for higher tiers
+        .setDepth(60);
+
+      const barrier = {
+        tier: tierIdx + 1,
+        hp: tierConfig.hp,
+        maxHp: tierConfig.hp,
+        defense: tierConfig.defense,
+        position: { q: 0, r: r },
+        sprite: sprite
+      };
+
+      this.createHealthBar(barrier);
+      this.gameState.stranglethorns.push(barrier);
+    }
+  }
+
+  /**
    * Draw the hex grid overlay
    */
   drawHexGrid() {
@@ -388,7 +523,7 @@ export class GameScene extends Phaser.Scene {
 
         // Only draw hexes that are on screen
         if (pos.x > -GAME_CONFIG.hexSize && pos.x < GAME_CONFIG.width + GAME_CONFIG.hexSize &&
-            pos.y > -GAME_CONFIG.hexSize && pos.y < GAME_CONFIG.height + GAME_CONFIG.hexSize) {
+          pos.y > -GAME_CONFIG.hexSize && pos.y < GAME_CONFIG.height + GAME_CONFIG.hexSize) {
 
           this.hexGrid.drawHex(
             this.hexGraphics,
